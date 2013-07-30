@@ -29,7 +29,7 @@ nginx在启动后，在unix系统中会以daemon的方式在后台运行，后�
 
 我们之前说过，推荐设置worker的个数为cpu的核数，在这里就很容易理解了，更多的worker数，只会导致进程来竞争cpu资源了，从而带来不必要的上下文切换。而且，nginx为了更好的利用多核特性，提供了cpu亲缘性的绑定选项，我们可以将某一个进程绑定在某一个核上，这样就不会因为进程的切换带来cache的失效。像这种小的优化在nginx中非常常见，同时也说明了nginx作者的苦心孤诣。比如，nginx在做4个字节的字符串比较时，会将4个字符转换成一个int型，再作比较，以减少cpu的指令数等等。
 
-现在，知道了nginx什么会选择这样的进程模型与事件模型了。对于一个基本的web服务器来说，事件通常有三种类型，网络事件、信号、定时器。从上面的讲解中知道，网络事件通过异步非阻塞可以很好的解决掉。如何处理信号与定时器？
+现在，知道了nginx为什么会选择这样的进程模型与事件模型了。对于一个基本的web服务器来说，事件通常有三种类型，网络事件、信号、定时器。从上面的讲解中知道，网络事件通过异步非阻塞可以很好的解决掉。如何处理信号与定时器？
 
 首先，信号的处理。对nginx来说，有一些特定的信号，代表着特定的意义。信号会中断掉程序当前的运行，在改变状态后，继续执行。如果是系统调用，则可能会导致系统调用的失败，需要重入。关于信号的处理，大家可以学习一些专业书籍，这里不多说。对于nginx来说，如果nginx正在等待事件（epoll_wait时），如果程序收到信号，在信号处理函数处理完后，epoll_wait会返回错误，然后程序可再次进入epoll_wait调用。
 
@@ -139,7 +139,7 @@ http请求是典型的请求-响应类型的的网络协议，而http是文件�
 
 keepalive
 ^^^^^^^^^^^^^^^^^
-当然，在nginx中，对于http1.0与http1.1也是支持长连接的。什么是长连接呢？我们知道，http请求是某于TCP协议之上的，那么，当客户端在发起请求前，需要先与服务端建立TCP连接，而每一次的TCP连接是需要三次握手来确定的，如果客户端与服务端之间网络差一点，这三次交互消费的时间会比较多，而且三次交互也会带来网络流量。当然，当连接断开后，也会有四次的交互，当然对用户体验来说就不重要了。而http请求是请求应答式的，如果我们能知道每个请求头与响应体的长度，那么我们是可以在一个连接上面执行多个请求的，这就是所谓的长连接，但前提条件是我们先得确定请求头与响应体的长度。对于请求来说，如果当前请求需要有body，如POST请求，那么nginx就需要客户端在请求头中指定content-length来表明body的大小，否则返回400错误。也就是说，请求体的长度是确定的，那么响应体的长度呢？先来看看http协议中关于响应body长度的确定：
+当然，在nginx中，对于http1.0与http1.1也是支持长连接的。什么是长连接呢？我们知道，http请求是基于TCP协议之上的，那么，当客户端在发起请求前，需要先与服务端建立TCP连接，而每一次的TCP连接是需要三次握手来确定的，如果客户端与服务端之间网络差一点，这三次交互消费的时间会比较多，而且三次交互也会带来网络流量。当然，当连接断开后，也会有四次的交互，当然对用户体验来说就不重要了。而http请求是请求应答式的，如果我们能知道每个请求头与响应体的长度，那么我们是可以在一个连接上面执行多个请求的，这就是所谓的长连接，但前提条件是我们先得确定请求头与响应体的长度。对于请求来说，如果当前请求需要有body，如POST请求，那么nginx就需要客户端在请求头中指定content-length来表明body的大小，否则返回400错误。也就是说，请求体的长度是确定的，那么响应体的长度呢？先来看看http协议中关于响应body长度的确定：
 
 1. 对于http1.0协议来说，如果响应头中有content-length头，则以content-length的长度就可以知道body的长度了，客户端在接收body时，就可以依照这个长度来接收数据，接收完后，就表示这个请求完成了。而如果没有content-length头，则客户端会一直接收数据，直到服务端主动断开连接，才表示body接收完了。
 
@@ -223,7 +223,7 @@ ngx_str_t(100%)
 
     ngx_str_t str, str1;
     str = ngx_string("hello world");    // 编译出错
-    str1 = ngx_null_string();                // 编译出错
+    str1 = ngx_null_string;                // 编译出错
 
 这种情况，可以调用ngx_str_set与ngx_str_null这两个函数来做:
 
@@ -233,7 +233,7 @@ ngx_str_t(100%)
     ngx_str_set(&str, "hello world");    
     ngx_str_null(&str1);
 
-不过要注意的是，ngx_string与ngx_str_set在调用时，传进去的字符串一定是常量字符串，否则会得到意想不到的错误。如： 
+不过要注意的是，ngx_string与ngx_str_set在调用时，传进去的字符串一定是常量字符串，否则会得到意想不到的错误(因为ngx_str_set内部使用了sizeof()，如果传入的是u_char*，那么计算的是这个指针的长度，而不是字符串的长度)。如： 
 
 .. code:: c
 
@@ -258,26 +258,26 @@ ngx_str_t(100%)
 
     ngx_strncmp(s1, s2, n)
 
-不区分大小写的字符串比较，只比较前n个字符。
+区分大小写的字符串比较，只比较前n个字符。
 
 
 .. code:: c
 
     ngx_strcmp(s1, s2)
 
-不区分大小写的不带长度的字符串比较。
+区分大小写的不带长度的字符串比较。
 
 .. code:: c
 
     ngx_int_t ngx_strcasecmp(u_char *s1, u_char *s2);
 
-区分大小写的不带长度的字符串比较。
+不区分大小写的不带长度的字符串比较。
 
 .. code:: c
 
     ngx_int_t ngx_strncasecmp(u_char *s1, u_char *s2, size_t n);
 
-区分大小写的带长度的字符串比较，只比较前n个字符。
+不区分大小写的带长度的字符串比较，只比较前n个字符。
 
 .. code:: c
 
@@ -370,7 +370,7 @@ ngx_pool_t(100%)
 
 ngx_pool_t是一个非常重要的数据结构，在很多重要的场合都有使用，很多重要的数据结构也都在使用它。那么它究竟是一个什么东西呢？简单的说，它提供了一种机制，帮助管理一系列的资源（如内存，文件等），使得对这些资源的使用和释放统一进行，免除了使用过程中考虑到对各种各样资源的什么时候释放，是否遗漏了释放的担心。
 
-例如对于内存的管理，如果我们需要使用内存，那么总是从一个ngx_pool_t的对象中获取内存，在最终的某个时刻，我们销毁这个ngx_pool_t对象，所有这些内存都被释放了。这样我们就不必要对对这些内存进行malloc和free的操作，不用担心是否某块被malloc出来的内存没有被释放。因为当ngx_pool_t对象对销毁的时候，所有从这个对象中分配出来的内存都会被统一释放掉。
+例如对于内存的管理，如果我们需要使用内存，那么总是从一个ngx_pool_t的对象中获取内存，在最终的某个时刻，我们销毁这个ngx_pool_t对象，所有这些内存都被释放了。这样我们就不必要对对这些内存进行malloc和free的操作，不用担心是否某块被malloc出来的内存没有被释放。因为当ngx_pool_t对象被销毁的时候，所有从这个对象中分配出来的内存都会被统一释放掉。
 
 在比如我们要使用一系列的文件，但是我们打开以后，最终需要都关闭，那么我们就把这些文件统一登记到一个ngx_pool_t对象中，当这个ngx_pool_t对象被销毁的时候，所有这些文件都将会被关闭。
 
@@ -1328,7 +1328,7 @@ worker进程中，ngx_worker_process_cycle()函数就是这个无限循环的处
 
 为了让大家更好的了解nginx中请求处理过程，我们以HTTP Request为例，来做一下详细地说明。
 
-从nginx的内部来看，一个HTTP Request的处理过程设计到一下几个阶段。
+从nginx的内部来看，一个HTTP Request的处理过程涉及到以下几个阶段。
 
 #) 初始化HTTP Request（读取来自客户端的数据，生成HTTP Requst对象，该对象含有该请求所有的信息）。
 #) 处理请求头。
@@ -1352,17 +1352,17 @@ worker进程中，ngx_worker_process_cycle()函数就是这个无限循环的处
 
 当nginx读取到一个HTTP Request的header的时候，nginx首先查找与这个请求关联的虚拟主机的配置。如果找到了这个虚拟主机的配置，那么通常情况下，这个HTTP Request将会经过以下几个阶段的处理（phase handlers）：
 
-:NGX_HTTP_POST_READ_PHASE:	读取请求内容阶段
-:NGX_HTTP_SERVER_REWRITE_PHASE:	Server请求地址重写阶段
-:NGX_HTTP_FIND_CONFIG_PHASE:	配置查找阶段:
-:NGX_HTTP_REWRITE_PHASE:	Location请求地址重写阶段
-:NGX_HTTP_POST_REWRITE_PHASE:	请求地址重写提交阶段
-:NGX_HTTP_PREACCESS_PHASE:	访问权限检查准备阶段
-:NGX_HTTP_ACCESS_PHASE:	访问权限检查阶段
-:NGX_HTTP_POST_ACCESS_PHASE:	访问权限检查提交阶段
-:NGX_HTTP_TRY_FILES_PHASE:	配置项try_files处理阶段  
-:NGX_HTTP_CONTENT_PHASE:	内容产生阶段
-:NGX_HTTP_LOG_PHASE:	日志模块处理阶段
+:NGX_HTTP_POST_READ_PHASE:      读取请求内容阶段
+:NGX_HTTP_SERVER_REWRITE_PHASE: Server请求地址重写阶段
+:NGX_HTTP_FIND_CONFIG_PHASE:    配置查找阶段:
+:NGX_HTTP_REWRITE_PHASE:        Location请求地址重写阶段
+:NGX_HTTP_POST_REWRITE_PHASE:   请求地址重写提交阶段
+:NGX_HTTP_PREACCESS_PHASE:      访问权限检查准备阶段
+:NGX_HTTP_ACCESS_PHASE: 访问权限检查阶段
+:NGX_HTTP_POST_ACCESS_PHASE:    访问权限检查提交阶段
+:NGX_HTTP_TRY_FILES_PHASE:      配置项try_files处理阶段  
+:NGX_HTTP_CONTENT_PHASE:        内容产生阶段
+:NGX_HTTP_LOG_PHASE:    日志模块处理阶段
 
 
 在内容产生阶段，为了给一个request产生正确的响应，nginx必须把这个request交给一个合适的content handler去处理。如果这个request对应的location在配置文件中被明确指定了一个content handler，那么nginx就可以通过对location的匹配，直接找到这个对应的handler，并把这个request交给这个content handler去处理。这样的配置指令包括像，perl，flv，proxy_pass，mp4等。
